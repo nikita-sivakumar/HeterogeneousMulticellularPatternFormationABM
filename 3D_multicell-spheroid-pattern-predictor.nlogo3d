@@ -1,0 +1,1446 @@
+extensions [vid]
+breed [as a]
+breed [bs b]
+undirected-link-breed [temps temp]
+undirected-link-breed [perms perm]
+
+;;
+
+globals[
+  a-count
+  b-count
+  num-ids viable-patches output_folder filecounter original-spheroid-radius final-spheroid-radius spheroid-radius-inc]
+as-own[
+  d-status
+  r-color
+  d-express-time
+  id
+  cluster-pause
+]
+bs-own[
+  c-status
+  g-color
+  c-express-time
+  id
+  cluster-pause
+]
+to setup
+  clear-all
+  vid:reset-recorder
+
+  set original-spheroid-radius spheroid-radius
+
+  ask patch 0 0 0[
+    set viable-patches patches in-radius spheroid-radius
+    let num-cells count patches in-radius spheroid-radius
+    show num-cells
+    let a-frac a-ratio / (a-ratio + b-ratio)
+    show a-frac
+    set a-count (num-cells * a-frac) * percent-saturation
+    set b-count ((num-cells / (a-ratio + b-ratio)) * b-ratio) * percent-saturation
+
+    let final-spheroid-vol (a-count + b-count)
+    set final-spheroid-radius ((final-spheroid-vol * (3 / 4)) / pi) ^ (1 / 3)
+    let spheroid-radius-difference spheroid-radius - final-spheroid-radius
+    set spheroid-radius-inc spheroid-radius-difference / 5
+
+    ask n-of (a-count) patches in-radius spheroid-radius with [count turtles-here = 0][
+      sprout-as 1[
+        set shape "circle"
+        set color blue
+        set size 1
+
+        set d-status false
+        set r-color false
+        set d-express-time 0
+        set id num-ids
+        set num-ids num-ids + 1
+        set cluster-pause 0
+      ]
+    ]
+    ask n-of (b-count) patches in-radius spheroid-radius with [count turtles-here = 0][
+      sprout-bs 1[
+        set shape "circle"
+        set color gray
+        set size 1
+
+        set c-status false
+        set g-color false
+        set c-express-time 0
+        set id num-ids
+        set num-ids num-ids + 1
+        set cluster-pause 0
+      ]
+    ]
+  ]
+
+;to set transparency:
+  ask turtles [
+    ;; since turtle colors might be either numbers (NetLogo colors) or lists
+    ;; (RGB or RGBA colors) make sure to handle both cases when changing the
+    ;; transparency
+    ifelse is-list? color
+    ;; list might either have 3 or 4 member since RGB and RGBA colors
+    ;; are allowed, so you can't just replace or add an item at the
+    ;; end of the list.  So, we take the first 3 elements of the list
+    ;; and add the alpha to the end
+    [ set color lput 200 sublist color 0 3 ]
+    ;; to get the RGB equivalent of a NetLogo color we
+    ;; use EXTRACT-RGB and then add alpha to the end
+    [ set color lput 200 extract-rgb color ]
+  ]
+  display
+
+  reset-ticks
+end
+
+to go
+  if ticks mod 25 = 0 [set spheroid-radius spheroid-radius - spheroid-radius-inc ask patch 0 0 0 [set viable-patches patches in-radius spheroid-radius]]
+  ask turtles [update-links]
+  let move-chance random 100
+
+  let cluster-list (range 0 (num-ids + 1))
+  foreach cluster-list [ask bs [cluster-c] ask as [cluster-d]]
+  foreach cluster-list move-cluster
+
+  ask turtles [set id num-ids set num-ids num-ids + 1]
+
+  ask bs with [count in-link-neighbors = 0][
+;    if move-chance < 70[
+      move-cen
+      if ticks > c-express-delay [if c-status = false [express-c]]
+      if g-color[set c-express-time c-express-time + 1]
+      if c-express-time > c-express-thresh [set c-status true]
+      ;if id = -1 [id-self]
+      cluster-c
+;    ]
+  ]
+  ask as with [count in-link-neighbors = 0 ][
+;    if move-chance < 70[
+    ifelse ticks < 40 [ifelse random 100 < 30 [move-cen] [move]][move]
+      if ticks > d-express-delay [if d-status = false [express-d]]
+      if r-color[set d-express-time d-express-time + 1]
+      if d-express-time > d-express-thresh [set d-status true]
+      ;if id = -1 [id-self]
+      cluster-d
+;    ]
+  ]
+
+  if ticks > 60 [ask bs with [c-status = true] [probe-surroundings]]
+  if ticks > 80 [ask as with [d-status = true] [probe-surroundings]]
+  normalize-ids
+;  ask turtles [set label id]
+
+  ask turtles [if ticks mod cluster-pause-delay = 0 [set cluster-pause 0]]
+  set num-ids 0
+  ;ask turtles with [count my-links > 0] [set color pink]
+
+  ;to set transparency:
+  ask turtles [
+    ;; since turtle colors might be either numbers (NetLogo colors) or lists
+    ;; (RGB or RGBA colors) make sure to handle both cases when changing the
+    ;; transparency
+    ifelse is-list? color
+    ;; list might either have 3 or 4 member since RGB and RGBA colors
+    ;; are allowed, so you can't just replace or add an item at the
+    ;; end of the list.  So, we take the first 3 elements of the list
+    ;; and add the alpha to the end
+    [ set color lput 200 sublist color 0 3 ]
+    ;; to get the RGB equivalent of a NetLogo color we
+    ;; use EXTRACT-RGB and then add alpha to the end
+    [ set color lput 150 extract-rgb color ]
+  ]
+  display
+
+  tick
+end
+
+to move
+  let empty-spots neighbors with [count turtles-here = 0]
+  let viable-empty-spots viable-patches with [member? self empty-spots]
+  if any? viable-empty-spots [
+    move-to one-of viable-empty-spots
+  ]
+;   if id = -1 [id-self]
+end
+
+to move-cen
+  let empty-spots neighbors with [count turtles-here = 0]
+  let viable-empty-spots viable-patches with [member? self empty-spots]
+  if any? viable-empty-spots [
+    let target min-one-of viable-empty-spots [distancexyz 0 0 0]
+    move-to target
+  ]
+;  if id = -1 [id-self]
+end
+
+to move-cluster [x]
+  let cluster turtles with [id = x]
+  let cluster-patches patch-set [patch-here] of cluster
+  ;print cluster-patches
+  ;ask cluster [set color orange]
+  if count cluster > 1 and count cluster < cluster-move-size[
+    ;ask cluster [set color orange]
+    let actor min-one-of cluster [distancexyz 0 0 0]
+    ask actor [
+      ;move-cen
+      ;set color pink
+      ifelse distancexyz 0 0 0 <= (spheroid-radius / 2) [fd 0][move-cen]
+    ]
+    ask cluster[
+   let others other turtles-here
+   if any? others[
+    ask links[untie]
+    ask others[
+      let empty-spots cluster-patches with [count turtles-here = 0]
+      if any? empty-spots [
+        let target min-one-of empty-spots [distance self]
+        move-to target
+      ]
+    ]
+    ask links[tie]
+      ]
+  ]
+  ]
+end
+
+to express-c
+  let n random 100
+  let c count as with [d-status = false] in-radius 1
+  if n < (1 - exp (-1 * exp-expression-const * c / 8)) * 100[
+    set color green
+    set g-color true
+  ]
+;  let n random 100
+;  let c count as in-radius 1
+;  if(c = 1)[
+;    if random 100 < 2[
+;      set color green
+;      set g-color true
+;    ]
+;  ]
+;  if(c = 2)[
+;    if random 100 < 10[
+;      set color green
+;      set g-color true
+;    ]
+;  ]
+;  if(c = 3)[
+;    if random 100 < 20[
+;      set color green
+;      set g-color true
+;    ]
+;  ]
+;  if(c > 3 AND c < 10)[
+;    if random 100 < 30[
+;      set color green
+;      set g-color true
+;    ]
+;  ]
+;  if(c > 9)[
+;    if random 100 < 50[
+;      set color green
+;      set g-color true
+;    ]
+;  ]
+end
+
+to express-d
+  let n random 100
+  let c count bs with [c-status = true] in-radius 1
+  if n < (1 - exp (-1 * exp-expression-const * c / 8)) * 100[
+    set color red
+    set r-color true
+  ]
+;  let n random 100
+;  let c count bs with [c-status = true] in-radius 1
+;  if(c = 1)[
+;    if random 100 < 1[
+;      set color red
+;      set r-color true
+;    ]
+;  ]
+;  if(c = 2)[
+;    if random 100 < 3[
+;      set color red
+;      set r-color true
+;    ]
+;  ]
+;  if(c = 3)[
+;    if random 100 < 5[
+;      set color red
+;      set r-color true
+;    ]
+;  ]
+;  if(c > 3 AND c < 10)[
+;    if random 100 < 30[
+;      set color red
+;      set r-color true
+;    ]
+;  ]
+;  if(c > 9)[
+;    if random 100 < 20[
+;      set color red
+;      set r-color true
+;    ]
+;  ]
+end
+
+to cluster-c
+  if c-status = true and cluster-pause = 0[
+    let x turtles-on neighbors6
+    set x x with [breed = bs] with [c-status = true]
+
+    let y turtles-on neighbors6
+    set y y with [breed = as] with [d-status = true]
+  ifelse any? x[
+      if random 100 < homotypic-prob [
+      create-perms-with x
+      id-linkers [id] of self x
+      ]
+  ]
+    [set id -1]
+;  if any? y[
+;    if count in-link-neighbors = 0 [id-self ]
+;    create-temps-with y
+;    id-linkers [id] of self y
+;  ]
+  ;if count in-link-neighbors = 0 [id-self ]
+;  if any? linkers[
+;    if count in-link-neighbors = 0 [id-self ]
+;    create-links-with linkers
+;    id-linkers [id] of self linkers
+    ;
+    ask perms [tie]
+    ask temps [tie]
+    ;set label id
+]
+end
+
+to cluster-d
+  if d-status = true and cluster-pause = 0[
+    let x turtles-on neighbors6
+    set x x with [breed = bs] with [c-status = true]
+
+    let y turtles-on neighbors6
+    set y y with [breed = as] with [d-status = true]
+
+    ;if count in-link-neighbors = 0 [id-self ]
+    ifelse any? y[
+      if random 100 < homotypic-prob[
+      create-perms-with y
+      id-linkers [id] of self y
+      ]
+    ]
+    [set id -1]
+
+    ifelse any? x[
+      if random 100 < heterotypic-prob[
+        create-temps-with x
+        id-linkers [id] of self x
+      ]
+    ]
+    [set id -1]
+
+;    ifelse any? x[
+;      create-temps-with x
+;      id-myself [id] of one-of x
+;    ]
+;    [set id -1]
+    ask perms [tie]
+    ask temps [tie]
+    ;set label id
+    ;if not any? x and not any? y [set id -1]
+  ]
+end
+
+to update-links
+  ;let chance random 100
+  ;show spheroid-radius
+  ask turtles with [distancexyz 0 0 0 > spheroid-radius * 2 / 3]
+  [
+    if count my-links > 0[
+      let n1 count my-perms
+      let n2 count my-temps
+      ifelse ticks < (d-express-delay + 20)
+      [
+        if random 100 < 90 [ask n-of (n1 / 2) my-perms [die] set cluster-pause 1]
+      ]
+      [
+        if random 100 < 85 [ask n-of (n1 / 4) my-perms [die] set cluster-pause 1]
+        if random 100 < 99 [ask n-of (n2 / 2) my-temps [die] set cluster-pause 1]
+      ]
+    ]
+  ]
+
+  ask turtles with [distancexyz 0 0 0 > spheroid-radius * 1 / 3 and distancexyz 0 0 0 < spheroid-radius * 2 / 3]
+  [
+    if count my-links > 0[
+      let n1 count my-perms
+      let n2 count my-temps
+      ifelse ticks < (d-express-delay + 20)
+      [
+        if random 100 < 80 [ask n-of (n1 / 2) my-perms [die] set cluster-pause 1]
+      ]
+      [
+        if random 100 < 70 [ask n-of (n1 / 4) my-perms [die] set cluster-pause 1]
+        if random 100 < 90 [ask n-of (n2 / 2) my-temps [die] set cluster-pause 1]
+      ]
+    ]
+  ]
+  ask turtles with [distancexyz 0 0 0 < spheroid-radius * 1 / 3 ]
+  [
+    if count my-links > 0[
+      let n1 count my-perms
+      let n2 count my-temps
+      ifelse ticks < (d-express-delay + 20)
+      [
+        if random 100 < 50 [ask n-of (n1 / 2) my-perms [die] set cluster-pause 1]
+      ]
+      [
+        if random 100 < 65 [ask n-of (n1 / 4) my-perms [die] set cluster-pause 1]
+        if random 100 < 85 [ask n-of (n2 / 4) my-temps [die] set cluster-pause 1]
+      ]
+    ]
+  ]
+
+;  if count in-link-neighbors = 0 [set id -1]
+
+;  let n1 count perms
+;  let n2 count perms with [link-length = sqrt(2)]
+;  print n2
+;  ;let n2 count temps
+;  if any? perms [ifelse ticks < 40 [if chance < 70 [ask n-of (n1 / 2) perms [untie die]]] [if chance < 50 [ask n-of (n1 / 2) perms [untie die]]]]
+;  ;if any? temps [ifelse ticks < 70 [if chance < 90 [ask one-of temps [untie die]]] [if chance < 70 [ask one-of temps [untie die]]]]
+
+  let x in-link-neighbors
+  let y turtles-on neighbors
+  let exterminate x with [not member? self y]
+  ask exterminate [ask link-with myself [die]]
+  if count in-link-neighbors = 0 [set id -1]
+end
+
+to probe-surroundings
+  ;if distancexy 0 0 > spheroid-radius [stop]
+  foreach [0 45 90 135 180 225 270 335] squeeze-out
+end
+
+to squeeze-out [h]
+  let x turtles-on patch-at-heading-and-distance h 2
+  ;ask x[set color pink]
+  let y turtles-on patch-at-heading-and-distance h 1
+  ;ask y[set color orange]
+  if any? x and any? y [
+    set x one-of x
+    set y one-of y
+    if ([breed] of self = [breed] of x) and ([breed] of x != [breed] of y) [switch-spots self y]
+  ]
+end
+
+to switch-spots [x y]
+  ask links[untie]
+  let patch1 [patch-here] of x
+  let patch2 [patch-here] of y
+  ask x [move-to patch2]
+  ask y [move-to patch1]
+  ask links[tie]
+end
+
+to id-self
+  set num-ids num-ids + 1
+  set id num-ids
+end
+
+to id-myself [x]
+  set id x
+end
+
+to id-linkers [x linkers]
+  ask linkers[
+    set id x
+    let n in-link-neighbors
+    if any? n[set id x]
+  ]
+end
+
+to normalize-ids
+  ask turtles[
+    let x [id] of self
+    let y in-link-neighbors
+    let z 0
+    if any? y [
+      ask y[
+        set id x
+        ask in-link-neighbors [set id x]
+      ]
+    ]
+  ]
+end
+
+to makeOutputFile
+  ;let check false
+  ;ask turtles [if distancexy 0 0 > spheroid-radius [if check = false [set check true]]]
+  ;ifelse check = false [
+  set fileCounter 0
+  let date date-and-time
+  repeat 16 [set date remove-item 0 date]
+
+  set output_folder (word "output_3.1/"a-ratio"A|"b-ratio"B_SphRad-"original-spheroid-radius"/")
+
+  ;let outputImageName ""
+;  while [file-exists? (word output_folder""date"_radius_"original-spheroid-radius"_"a-ratio"A|"b-ratio"B_run_"fileCounter".png")][set fileCounter fileCounter + 1]
+;  let outputImageName (word output_folder""date"_radius_"original-spheroid-radius"_"a-ratio"A|"b-ratio"B_run_"fileCounter".png")
+;
+;  export-view outputImageName
+  ;]
+  outputXYH
+  outputCellCounts
+end
+
+
+to outputXYH
+set output_folder (word "output_3.1/"a-ratio"A|"b-ratio"B_SphRad-"original-spheroid-radius"/")
+let date date-and-time
+repeat 16 [set date remove-item 0 date]
+while [file-exists? (word output_folder"run_"fileCounter".txt")][set fileCounter fileCounter + 1]
+let outputFileXYHA (word output_folder"run_"fileCounter".txt")
+ file-open outputFileXYHA
+  ask turtles[
+    file-write xcor
+    file-write ycor
+    file-write zcor
+    file-write color
+    file-write heading
+    file-print ""
+  ]
+  file-close
+end
+
+to outputCellCounts
+
+  set output_folder (word "output_3.1/"a-ratio"A|"b-ratio"B_SphRad-"original-spheroid-radius"/")
+  while [file-exists? (word output_folder"run_"fileCounter"_CellCount.txt")][set fileCounter fileCounter + 1]
+  let outputFileXYHA (word output_folder"run_"fileCounter"_CellCount.txt")
+  file-open outputFileXYHA
+
+  file-write (word "a-count")
+  file-write count as with [d-status = false and r-color = false]
+  file-print ""
+
+  file-write (word "b-count")
+  file-write count bs with [c-status = false and g-color = false]
+  file-print ""
+
+  file-write (word "c-count")
+  file-write count bs with [c-status = true and g-color = true]
+  file-print ""
+
+  file-write (word "d-count")
+  file-write count as with [d-status = true and r-color = true]
+  file-print ""
+
+  file-write (word "cell-count")
+  file-write count turtles
+  file-print ""
+
+  file-close
+end
+@#$#@#$#@
+GRAPHICS-WINDOW
+0
+0
+437
+438
+-1
+-1
+13.0
+1
+10
+1
+1
+1
+0
+1
+1
+1
+-16
+16
+-16
+16
+-16
+16
+1
+0
+1
+ticks
+30.0
+
+BUTTON
+64
+39
+130
+72
+NIL
+setup\n
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+BUTTON
+156
+39
+219
+72
+NIL
+go
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+BUTTON
+65
+87
+196
+120
+repeat 100 [go]
+repeat 100 [go]\n\n
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+SLIDER
+66
+143
+238
+176
+spheroid-radius
+spheroid-radius
+0
+20
+4.723772111065958
+.1
+1
+NIL
+HORIZONTAL
+
+INPUTBOX
+67
+191
+121
+251
+a-ratio
+1.0
+1
+0
+Number
+
+INPUTBOX
+132
+190
+182
+250
+b-ratio
+9.0
+1
+0
+Number
+
+SLIDER
+351
+43
+539
+76
+c-express-delay
+c-express-delay
+0
+100
+10.0
+1
+1
+ticks
+HORIZONTAL
+
+SLIDER
+351
+87
+541
+120
+c-express-thresh
+c-express-thresh
+0
+100
+10.0
+1
+1
+ticks
+HORIZONTAL
+
+SLIDER
+351
+132
+540
+165
+d-express-delay
+d-express-delay
+0
+100
+20.0
+1
+1
+ticks
+HORIZONTAL
+
+SLIDER
+351
+175
+542
+208
+d-express-thresh
+d-express-thresh
+0
+100
+10.0
+1
+1
+ticks
+HORIZONTAL
+
+SLIDER
+64
+265
+236
+298
+percent-saturation
+percent-saturation
+0
+1
+0.65
+.01
+1
+NIL
+HORIZONTAL
+
+MONITOR
+352
+224
+415
+269
+a-count
+a-count
+0
+1
+11
+
+MONITOR
+425
+224
+489
+269
+b-count
+b-count
+0
+1
+11
+
+MONITOR
+351
+281
+490
+326
+spheroid-radius
+spheroid-radius
+2
+1
+11
+
+BUTTON
+353
+343
+451
+376
+NIL
+outputXYH
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+SLIDER
+577
+44
+756
+77
+cluster-pause-delay
+cluster-pause-delay
+0
+10
+3.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+577
+89
+756
+122
+cluster-move-size
+cluster-move-size
+0
+10
+5.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+577
+176
+749
+209
+homotypic-prob
+homotypic-prob
+0
+100
+100.0
+10
+1
+NIL
+HORIZONTAL
+
+SLIDER
+576
+133
+770
+166
+exp-expression-const
+exp-expression-const
+0
+.3
+0.1
+.05
+1
+NIL
+HORIZONTAL
+
+SLIDER
+580
+226
+752
+259
+heterotypic-prob
+heterotypic-prob
+0
+100
+0.0
+10
+1
+NIL
+HORIZONTAL
+
+@#$#@#$#@
+## WHAT IS IT?
+
+(a general understanding of what the model is trying to show or explain)
+
+## HOW IT WORKS
+
+(what rules the agents use to create the overall behavior of the model)
+
+## HOW TO USE IT
+
+(how to use the model, including a description of each of the items in the Interface tab)
+
+## THINGS TO NOTICE
+
+(suggested things for the user to notice while running the model)
+
+## THINGS TO TRY
+
+(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
+
+## EXTENDING THE MODEL
+
+(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
+
+## NETLOGO FEATURES
+
+(interesting or unusual features of NetLogo that the model uses, particularly in the Code tab; or where workarounds were needed for missing features)
+
+## RELATED MODELS
+
+(models in the NetLogo Models Library and elsewhere which are of related interest)
+
+## CREDITS AND REFERENCES
+
+(a reference to the model's URL on the web if it has one, as well as any other necessary credits, citations, and links)
+@#$#@#$#@
+default
+true
+0
+Polygon -7500403 true true 150 5 40 250 150 205 260 250
+
+airplane
+true
+0
+Polygon -7500403 true true 150 0 135 15 120 60 120 105 15 165 15 195 120 180 135 240 105 270 120 285 150 270 180 285 210 270 165 240 180 180 285 195 285 165 180 105 180 60 165 15
+
+arrow
+true
+0
+Polygon -7500403 true true 150 0 0 150 105 150 105 293 195 293 195 150 300 150
+
+box
+false
+0
+Polygon -7500403 true true 150 285 285 225 285 75 150 135
+Polygon -7500403 true true 150 135 15 75 150 15 285 75
+Polygon -7500403 true true 15 75 15 225 150 285 150 135
+Line -16777216 false 150 285 150 135
+Line -16777216 false 150 135 15 75
+Line -16777216 false 150 135 285 75
+
+bug
+true
+0
+Circle -7500403 true true 96 182 108
+Circle -7500403 true true 110 127 80
+Circle -7500403 true true 110 75 80
+Line -7500403 true 150 100 80 30
+Line -7500403 true 150 100 220 30
+
+butterfly
+true
+0
+Polygon -7500403 true true 150 165 209 199 225 225 225 255 195 270 165 255 150 240
+Polygon -7500403 true true 150 165 89 198 75 225 75 255 105 270 135 255 150 240
+Polygon -7500403 true true 139 148 100 105 55 90 25 90 10 105 10 135 25 180 40 195 85 194 139 163
+Polygon -7500403 true true 162 150 200 105 245 90 275 90 290 105 290 135 275 180 260 195 215 195 162 165
+Polygon -16777216 true false 150 255 135 225 120 150 135 120 150 105 165 120 180 150 165 225
+Circle -16777216 true false 135 90 30
+Line -16777216 false 150 105 195 60
+Line -16777216 false 150 105 105 60
+
+car
+false
+0
+Polygon -7500403 true true 300 180 279 164 261 144 240 135 226 132 213 106 203 84 185 63 159 50 135 50 75 60 0 150 0 165 0 225 300 225 300 180
+Circle -16777216 true false 180 180 90
+Circle -16777216 true false 30 180 90
+Polygon -16777216 true false 162 80 132 78 134 135 209 135 194 105 189 96 180 89
+Circle -7500403 true true 47 195 58
+Circle -7500403 true true 195 195 58
+
+circle
+false
+0
+Circle -7500403 true true 0 0 300
+
+circle 2
+false
+0
+Circle -7500403 true true 0 0 300
+Circle -16777216 true false 30 30 240
+
+cow
+false
+0
+Polygon -7500403 true true 200 193 197 249 179 249 177 196 166 187 140 189 93 191 78 179 72 211 49 209 48 181 37 149 25 120 25 89 45 72 103 84 179 75 198 76 252 64 272 81 293 103 285 121 255 121 242 118 224 167
+Polygon -7500403 true true 73 210 86 251 62 249 48 208
+Polygon -7500403 true true 25 114 16 195 9 204 23 213 25 200 39 123
+
+cylinder
+false
+0
+Circle -7500403 true true 0 0 300
+
+dot
+false
+0
+Circle -7500403 true true 90 90 120
+
+face happy
+false
+0
+Circle -7500403 true true 8 8 285
+Circle -16777216 true false 60 75 60
+Circle -16777216 true false 180 75 60
+Polygon -16777216 true false 150 255 90 239 62 213 47 191 67 179 90 203 109 218 150 225 192 218 210 203 227 181 251 194 236 217 212 240
+
+face neutral
+false
+0
+Circle -7500403 true true 8 7 285
+Circle -16777216 true false 60 75 60
+Circle -16777216 true false 180 75 60
+Rectangle -16777216 true false 60 195 240 225
+
+face sad
+false
+0
+Circle -7500403 true true 8 8 285
+Circle -16777216 true false 60 75 60
+Circle -16777216 true false 180 75 60
+Polygon -16777216 true false 150 168 90 184 62 210 47 232 67 244 90 220 109 205 150 198 192 205 210 220 227 242 251 229 236 206 212 183
+
+fish
+false
+0
+Polygon -1 true false 44 131 21 87 15 86 0 120 15 150 0 180 13 214 20 212 45 166
+Polygon -1 true false 135 195 119 235 95 218 76 210 46 204 60 165
+Polygon -1 true false 75 45 83 77 71 103 86 114 166 78 135 60
+Polygon -7500403 true true 30 136 151 77 226 81 280 119 292 146 292 160 287 170 270 195 195 210 151 212 30 166
+Circle -16777216 true false 215 106 30
+
+flag
+false
+0
+Rectangle -7500403 true true 60 15 75 300
+Polygon -7500403 true true 90 150 270 90 90 30
+Line -7500403 true 75 135 90 135
+Line -7500403 true 75 45 90 45
+
+flower
+false
+0
+Polygon -10899396 true false 135 120 165 165 180 210 180 240 150 300 165 300 195 240 195 195 165 135
+Circle -7500403 true true 85 132 38
+Circle -7500403 true true 130 147 38
+Circle -7500403 true true 192 85 38
+Circle -7500403 true true 85 40 38
+Circle -7500403 true true 177 40 38
+Circle -7500403 true true 177 132 38
+Circle -7500403 true true 70 85 38
+Circle -7500403 true true 130 25 38
+Circle -7500403 true true 96 51 108
+Circle -16777216 true false 113 68 74
+Polygon -10899396 true false 189 233 219 188 249 173 279 188 234 218
+Polygon -10899396 true false 180 255 150 210 105 210 75 240 135 240
+
+house
+false
+0
+Rectangle -7500403 true true 45 120 255 285
+Rectangle -16777216 true false 120 210 180 285
+Polygon -7500403 true true 15 120 150 15 285 120
+Line -16777216 false 30 120 270 120
+
+leaf
+false
+0
+Polygon -7500403 true true 150 210 135 195 120 210 60 210 30 195 60 180 60 165 15 135 30 120 15 105 40 104 45 90 60 90 90 105 105 120 120 120 105 60 120 60 135 30 150 15 165 30 180 60 195 60 180 120 195 120 210 105 240 90 255 90 263 104 285 105 270 120 285 135 240 165 240 180 270 195 240 210 180 210 165 195
+Polygon -7500403 true true 135 195 135 240 120 255 105 255 105 285 135 285 165 240 165 195
+
+line
+true
+0
+Line -7500403 true 150 0 150 300
+
+line half
+true
+0
+Line -7500403 true 150 0 150 150
+
+pentagon
+false
+0
+Polygon -7500403 true true 150 15 15 120 60 285 240 285 285 120
+
+person
+false
+0
+Circle -7500403 true true 110 5 80
+Polygon -7500403 true true 105 90 120 195 90 285 105 300 135 300 150 225 165 300 195 300 210 285 180 195 195 90
+Rectangle -7500403 true true 127 79 172 94
+Polygon -7500403 true true 195 90 240 150 225 180 165 105
+Polygon -7500403 true true 105 90 60 150 75 180 135 105
+
+plant
+false
+0
+Rectangle -7500403 true true 135 90 165 300
+Polygon -7500403 true true 135 255 90 210 45 195 75 255 135 285
+Polygon -7500403 true true 165 255 210 210 255 195 225 255 165 285
+Polygon -7500403 true true 135 180 90 135 45 120 75 180 135 210
+Polygon -7500403 true true 165 180 165 210 225 180 255 120 210 135
+Polygon -7500403 true true 135 105 90 60 45 45 75 105 135 135
+Polygon -7500403 true true 165 105 165 135 225 105 255 45 210 60
+Polygon -7500403 true true 135 90 120 45 150 15 180 45 165 90
+
+sheep
+false
+15
+Circle -1 true true 203 65 88
+Circle -1 true true 70 65 162
+Circle -1 true true 150 105 120
+Polygon -7500403 true false 218 120 240 165 255 165 278 120
+Circle -7500403 true false 214 72 67
+Rectangle -1 true true 164 223 179 298
+Polygon -1 true true 45 285 30 285 30 240 15 195 45 210
+Circle -1 true true 3 83 150
+Rectangle -1 true true 65 221 80 296
+Polygon -1 true true 195 285 210 285 210 240 240 210 195 210
+Polygon -7500403 true false 276 85 285 105 302 99 294 83
+Polygon -7500403 true false 219 85 210 105 193 99 201 83
+
+square
+false
+0
+Rectangle -7500403 true true 30 30 270 270
+
+square 2
+false
+0
+Rectangle -7500403 true true 30 30 270 270
+Rectangle -16777216 true false 60 60 240 240
+
+star
+false
+0
+Polygon -7500403 true true 151 1 185 108 298 108 207 175 242 282 151 216 59 282 94 175 3 108 116 108
+
+target
+false
+0
+Circle -7500403 true true 0 0 300
+Circle -16777216 true false 30 30 240
+Circle -7500403 true true 60 60 180
+Circle -16777216 true false 90 90 120
+Circle -7500403 true true 120 120 60
+
+tree
+false
+0
+Circle -7500403 true true 118 3 94
+Rectangle -6459832 true false 120 195 180 300
+Circle -7500403 true true 65 21 108
+Circle -7500403 true true 116 41 127
+Circle -7500403 true true 45 90 120
+Circle -7500403 true true 104 74 152
+
+triangle
+false
+0
+Polygon -7500403 true true 150 30 15 255 285 255
+
+triangle 2
+false
+0
+Polygon -7500403 true true 150 30 15 255 285 255
+Polygon -16777216 true false 151 99 225 223 75 224
+
+truck
+false
+0
+Rectangle -7500403 true true 4 45 195 187
+Polygon -7500403 true true 296 193 296 150 259 134 244 104 208 104 207 194
+Rectangle -1 true false 195 60 195 105
+Polygon -16777216 true false 238 112 252 141 219 141 218 112
+Circle -16777216 true false 234 174 42
+Rectangle -7500403 true true 181 185 214 194
+Circle -16777216 true false 144 174 42
+Circle -16777216 true false 24 174 42
+Circle -7500403 false true 24 174 42
+Circle -7500403 false true 144 174 42
+Circle -7500403 false true 234 174 42
+
+turtle
+true
+0
+Polygon -10899396 true false 215 204 240 233 246 254 228 266 215 252 193 210
+Polygon -10899396 true false 195 90 225 75 245 75 260 89 269 108 261 124 240 105 225 105 210 105
+Polygon -10899396 true false 105 90 75 75 55 75 40 89 31 108 39 124 60 105 75 105 90 105
+Polygon -10899396 true false 132 85 134 64 107 51 108 17 150 2 192 18 192 52 169 65 172 87
+Polygon -10899396 true false 85 204 60 233 54 254 72 266 85 252 107 210
+Polygon -7500403 true true 119 75 179 75 209 101 224 135 220 225 175 261 128 261 81 224 74 135 88 99
+
+wheel
+false
+0
+Circle -7500403 true true 3 3 294
+Circle -16777216 true false 30 30 240
+Line -7500403 true 150 285 150 15
+Line -7500403 true 15 150 285 150
+Circle -7500403 true true 120 120 60
+Line -7500403 true 216 40 79 269
+Line -7500403 true 40 84 269 221
+Line -7500403 true 40 216 269 79
+Line -7500403 true 84 40 221 269
+
+wolf
+false
+0
+Polygon -16777216 true false 253 133 245 131 245 133
+Polygon -7500403 true true 2 194 13 197 30 191 38 193 38 205 20 226 20 257 27 265 38 266 40 260 31 253 31 230 60 206 68 198 75 209 66 228 65 243 82 261 84 268 100 267 103 261 77 239 79 231 100 207 98 196 119 201 143 202 160 195 166 210 172 213 173 238 167 251 160 248 154 265 169 264 178 247 186 240 198 260 200 271 217 271 219 262 207 258 195 230 192 198 210 184 227 164 242 144 259 145 284 151 277 141 293 140 299 134 297 127 273 119 270 105
+Polygon -7500403 true true -1 195 14 180 36 166 40 153 53 140 82 131 134 133 159 126 188 115 227 108 236 102 238 98 268 86 269 92 281 87 269 103 269 113
+
+x
+false
+0
+Polygon -7500403 true true 270 75 225 30 30 225 75 270
+Polygon -7500403 true true 30 75 75 30 270 225 225 270
+@#$#@#$#@
+NetLogo 3D 6.0.4
+@#$#@#$#@
+need-to-manually-make-preview-for-this-model
+@#$#@#$#@
+@#$#@#$#@
+<experiments>
+  <experiment name="1,4,9A:1B_200" repetitions="100" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <final>outputXYH</final>
+    <timeLimit steps="100"/>
+    <enumeratedValueSet variable="percent-saturation">
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-delay">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="b-ratio">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-thresh">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-delay">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="spheroid-radius">
+      <value value="4"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="a-ratio">
+      <value value="1"/>
+      <value value="4"/>
+      <value value="9"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="1A:4,9B_200" repetitions="100" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <final>outputXYH</final>
+    <timeLimit steps="100"/>
+    <enumeratedValueSet variable="percent-saturation">
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-delay">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="b-ratio">
+      <value value="4"/>
+      <value value="9"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-thresh">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-delay">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="spheroid-radius">
+      <value value="4"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="a-ratio">
+      <value value="1"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="1,4,9A:1B_60" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <final>outputXYH</final>
+    <timeLimit steps="100"/>
+    <enumeratedValueSet variable="percent-saturation">
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-delay">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="b-ratio">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-thresh">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-delay">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="spheroid-radius">
+      <value value="2.68"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="a-ratio">
+      <value value="1"/>
+      <value value="4"/>
+      <value value="9"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="1A:4,9B_60" repetitions="10" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <final>outputXYH</final>
+    <timeLimit steps="100"/>
+    <enumeratedValueSet variable="percent-saturation">
+      <value value="0.75"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-delay">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="b-ratio">
+      <value value="4"/>
+      <value value="9"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-thresh">
+      <value value="15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-delay">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="spheroid-radius">
+      <value value="2.68"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="a-ratio">
+      <value value="1"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="1,9A|1B_SphRad-5.3" repetitions="30" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <final>makeOutputFile</final>
+    <timeLimit steps="100"/>
+    <enumeratedValueSet variable="percent-saturation">
+      <value value="0.65"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-delay">
+      <value value="20"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="heterotypic-prob">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="b-ratio">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="exp-expression-const">
+      <value value="0.15"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="homotypic-prob">
+      <value value="100"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="cluster-move-size">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="cluster-pause-delay">
+      <value value="3"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="spheroid-radius">
+      <value value="5.3"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-delay">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="a-ratio">
+      <value value="1"/>
+      <value value="9"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="1A|9B_SphRad-5.3" repetitions="30" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <final>makeOutputFile</final>
+    <timeLimit steps="100"/>
+    <enumeratedValueSet variable="percent-saturation">
+      <value value="0.65"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-delay">
+      <value value="20"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="heterotypic-prob">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="b-ratio">
+      <value value="9"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="exp-expression-const">
+      <value value="0.1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="d-express-thresh">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="homotypic-prob">
+      <value value="100"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="cluster-move-size">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="cluster-pause-delay">
+      <value value="3"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="spheroid-radius">
+      <value value="5.3"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="c-express-delay">
+      <value value="10"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="a-ratio">
+      <value value="1"/>
+    </enumeratedValueSet>
+  </experiment>
+</experiments>
+@#$#@#$#@
+@#$#@#$#@
+default
+0.0
+-0.2 0 0.0 1.0
+0.0 1 1.0 0.0
+0.2 0 0.0 1.0
+link direction
+true
+0
+Line -7500403 true 150 150 90 180
+Line -7500403 true 150 150 210 180
+@#$#@#$#@
+0
+@#$#@#$#@
